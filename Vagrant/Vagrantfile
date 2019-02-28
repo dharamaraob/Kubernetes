@@ -1,0 +1,93 @@
+VAGRANTFILE_API_VERSION = '2'
+
+
+DOCKER_VERSION = "5:18.09.0~3-0~ubuntu-xenial"
+APT_K8S_GPG    = 'https://packages.cloud.google.com/apt/doc/apt-key.gpg'
+APT_K8S_REPO   = 'https://apt.kubernetes.io/'
+
+K8S_MASTER_IPADDR    = '192.168.252.10'
+K8S_NODE1_IPADDR     = '192.168.252.11'
+K8S_POD_NETWORK_CIDR = '192.168.252.0/23'
+
+$DOCKER_INSTALL_SCRIPT = <<-SCRIPT
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  apt-get update
+  apt-get install -y docker-ce=#{DOCKER_VERSION}
+SCRIPT
+
+$K8S_INSTALL_SCRIPT = <<-SCRIPT
+  curl -s #{APT_K8S_GPG} | apt-key add -
+  add-apt-repository "deb [arch=amd64] #{APT_K8S_REPO} kubernetes-xenial main"
+  apt-get update
+  apt-get install -y kubelet kubeadm kubectl
+  apt-mark hold kubelet kubeadm kubectl
+SCRIPT
+
+$K8S_MASTER_INIT = <<-SCRIPT
+  kubeadm init \
+    --pod-network-cidr=#{K8S_POD_NETWORK_CIDR} \
+    --apiserver-advertise-address=#{K8S_MASTER_IPADDR}
+SCRIPT
+
+$K8S_MASTER_NETWORK = <<-SCRIPT
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+  kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/a70459be0084506e4ec919aa1c114638878db11b/Documentation/kube-flannel.yml
+  sysctl net.bridge.bridge-nf-call-iptables=1
+SCRIPT
+
+# After starting the master run the following command, and copy the token and hash in here
+#  sudo kubeadm token create --print-join-command
+$K8S_NODE_INIT = <<-SCRIPT
+  kubeadm join #{K8S_MASTER_IPADDR}:6443 \
+    --token zlme3y.yepd1ssvzvdamp2a \
+    --discovery-token-ca-cert-hash sha256:e6218d9764ca4cc25706012b8dbe5fca8a1bd73ee2cdb4225498343043a4048f
+  sysctl net.bridge.bridge-nf-call-iptables=1
+SCRIPT
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+
+  config.vm.provider :virtualbox do |vb|
+    vb.gui = false
+    vb.customize [ 'modifyvm', :id, '--memory', '2048' ]
+    vb.customize [ 'modifyvm', :id, '--nictype1', 'virtio' ]
+    vb.customize [ 'modifyvm', :id, '--natdnshostresolver1', 'on' ]
+    vb.customize [ 'modifyvm', :id, '--natdnsproxy1', 'on' ]
+  end
+
+  config.vm.define 'master' do |master|
+    master.vm.box      = 'ubuntu/xenial64'
+    master.vm.hostname = 'master'
+
+    master.vm.network "private_network", ip: "#{K8S_MASTER_IPADDR}", nic_type: "virtio", virtualbox__intnet: true
+    master.vm.network "forwarded_port", guest: 6443, host: 6444
+
+    master.vm.provision 'shell', inline: 'apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5'
+    master.vm.provision 'shell', inline: 'apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32'
+    master.vm.provision 'shell', inline: 'apt-get update'
+    master.vm.provision 'shell', inline: 'apt-get install -y -qq apt-transport-https curl'
+    master.vm.provision 'shell', inline: $DOCKER_INSTALL_SCRIPT
+    master.vm.provision 'shell', inline: $K8S_INSTALL_SCRIPT
+    master.vm.provision 'shell', inline: $K8S_MASTER_INIT
+    master.vm.provision 'shell', inline: $K8S_MASTER_NETWORK
+  end
+
+  config.vm.define 'node1' do |n1|
+    n1.vm.box      = 'ubuntu/xenial64'
+    n1.vm.hostname = 'n1'
+
+    n1.vm.network "private_network", ip: "#{K8S_NODE1_IPADDR}", nic_type: "virtio", virtualbox__intnet: true
+    # Export more ports here
+    #n1.vm.network "forwarded_port", guest: 80,  host: 8888
+    #n1.vm.network "forwarded_port", guest: 443, host: 4443
+
+    n1.vm.provision 'shell', inline: 'apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5'
+    n1.vm.provision 'shell', inline: 'apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32'
+    n1.vm.provision 'shell', inline: 'apt-get update'
+    n1.vm.provision 'shell', inline: 'apt-get install -y -qq apt-transport-https curl'
+    n1.vm.provision 'shell', inline: $DOCKER_INSTALL_SCRIPT
+    n1.vm.provision 'shell', inline: $K8S_INSTALL_SCRIPT
+    n1.vm.provision 'shell', inline: $K8S_NODE_INIT
+  end
+
+end
