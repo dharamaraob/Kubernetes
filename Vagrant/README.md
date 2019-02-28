@@ -17,3 +17,4 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config</br>
 
   If you want to add more nodes, just copy and paste the</br>
   config.vm.define 'node1' do |n1|" block, changing references to n1 for n2, etc</br>
+  https://github.com/kubernetes/kubernetes/issues/23726 <br/>
